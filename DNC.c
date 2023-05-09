@@ -1,17 +1,12 @@
-//bruteforceNaive.c
-//Tambien cifra un texto cualquiera con un key arbitrario.
-//OJO: asegurarse que la palabra a buscar sea lo suficientemente grande
-//  evitando falsas soluciones ya que sera muy improbable que tal palabra suceda de
-//  forma pseudoaleatoria en el descifrado.
-//>> mpicc bruteforce.c -o desBrute
-//>> mpirun -np <N> desBrute
-
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
 #include <unistd.h>
 #include <rpc/des_crypt.h>	
+
+
+void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper);
 
 //descifra un texto dado una llave
 void decrypt(long key, char *ciph, int len);
@@ -29,11 +24,11 @@ long the_key = 123456L;
 //long the_key = 18014398509481983L +1L;
 
 
-  MPI_Status st;
-  MPI_Request req;
-  long found = 0L;
-  int ready = 0;
-  int N, id;
+MPI_Status st;
+MPI_Request req;
+long found = 0L;
+int ready = 0;
+int N, id;
 
 int main(int argc, char *argv[]){ //char **argv
   long upper = (1L <<56); //upper bound DES keys 2^56
@@ -49,6 +44,8 @@ int main(int argc, char *argv[]){ //char **argv
   MPI_Comm comm = MPI_COMM_WORLD;
   MPI_Comm_size(comm, &N);
   MPI_Comm_rank(comm, &id);
+
+  
 
   char buffer[1024];
   FILE *inputFile;
@@ -97,20 +94,8 @@ int main(int argc, char *argv[]){ //char **argv
   //non blocking receive, revisar en el for si alguien ya encontro
   MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, MPI_ANY_TAG, comm, &req);
 
-  for(long i = mylower; i<myupper; ++i){
-    MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
-    if(ready)
-      break;  //ya encontraron, salir
+  DNCbruteForce(cipher, ciphlen, mylower, myupper);
 
-    if(tryKey(i, cipher, ciphlen)){
-      found = i;
-      printf("Process %d found the key\n", id);
-      for(int node=0; node<N; node++){
-        MPI_Send(&found, 1, MPI_LONG, node, 0, comm); //avisar a otros
-      }
-      break;
-    }
-  }
 
   //wait y luego imprimir el texto
   if(id==0){
@@ -127,6 +112,30 @@ int main(int argc, char *argv[]){ //char **argv
   MPI_Finalize();
 }
 
+#define sweep 10
+void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper)
+{
+  if (lower >= upper) return;
+  MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
+  if(ready)
+    return;  //ya encontraron, salir
+
+  long mid = (lower+upper)/2;
+  long limit = mid+sweep > upper? upper : mid+sweep;
+  for(long i = mid; i < limit; ++i)
+    if(tryKey(i, cipher, ciphlen))
+    {
+      found = i;
+      printf("Process %d found the key\n", id);
+      for(int node=0; node<N; node++){
+        MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
+      }
+      return;
+    }
+
+  DNCbruteForce(cipher, ciphlen, lower, mid);
+  DNCbruteForce(cipher, ciphlen, mid+sweep+1, upper);
+}
 
 
 int tryKey(long key, char *ciph, int len)

@@ -1,1 +1,1 @@
-Una vez listo el paso anterior, proceder a hacer las siguientes pruebas, evidenciando todo en su reporte. Para todas ellas utilice 4 procesos (-np 4). El texto a cifrar/descifrar: “Esta es una prueba de proyecto 2”. La palabra clave a buscar es: “es una prueba de”:
+Esta es una prueba de proyecto 2, un poco más larga y sacada de foo.txt
