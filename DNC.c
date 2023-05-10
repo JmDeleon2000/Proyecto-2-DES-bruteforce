@@ -96,7 +96,6 @@ int main(int argc, char *argv[]){ //char **argv
 
   DNCbruteForce(cipher, ciphlen, mylower, myupper);
 
-
   //wait y luego imprimir el texto
   if(id==0){
     MPI_Wait(&req, &st);
