@@ -1,3 +1,11 @@
+//bruteforceNaive.c
+//Tambien cifra un texto cualquiera con un key arbitrario.
+//OJO: asegurarse que la palabra a buscar sea lo suficientemente grande
+//  evitando falsas soluciones ya que sera muy improbable que tal palabra suceda de
+//  forma pseudoaleatoria en el descifrado.
+//>> mpicc bruteforce.c -o desBrute
+//>> mpirun -np <N> desBrute
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,7 +14,7 @@
 #include <rpc/des_crypt.h>	
 
 
-void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper);
+void sieve(char* cipher, int ciphlen);
 
 //descifra un texto dado una llave
 void decrypt(long key, char *ciph, int len);
@@ -24,15 +32,14 @@ long the_key = 123456L;
 //long the_key = 18014398509481983L +1L;
 
 
-MPI_Status st;
-MPI_Request req;
-long found = 0L;
-int ready = 0;
-int N, id;
+  MPI_Status st;
+  MPI_Request req;
+  long found = 0L;
+  int ready = 0;
+  int N, id;
 
 int main(int argc, char *argv[]){ //char **argv
   long upper = (1L <<56); //upper bound DES keys 2^56
-  long mylower, myupper;
   double tstart, tend;
 
   if (argc > 1)
@@ -45,7 +52,8 @@ int main(int argc, char *argv[]){ //char **argv
   MPI_Comm_size(comm, &N);
   MPI_Comm_rank(comm, &id);
 
-  
+  if (id == 0)
+    printf("Searching for the key: %ld\n", the_key);
 
   char buffer[1024];
   FILE *inputFile;
@@ -81,20 +89,10 @@ int main(int argc, char *argv[]){ //char **argv
   
   tstart = MPI_Wtime();
 
-  //distribuir trabajo de forma naive
-  long range_per_node = upper / N;
-  mylower = range_per_node * id;
-  myupper = range_per_node * (id+1) -1;
-  if(id == N-1){
-    //compensar residuo
-    myupper = upper;
-  }
-  printf("Process %d lower %ld upper %ld\n", id, mylower, myupper);
-
   //non blocking receive, revisar en el for si alguien ya encontro
   MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, MPI_ANY_TAG, comm, &req);
 
-  DNCbruteForce(cipher, ciphlen, mylower, myupper);
+  sieve(cipher, ciphlen);
 
   //wait y luego imprimir el texto
   if(id==0){
@@ -111,30 +109,6 @@ int main(int argc, char *argv[]){ //char **argv
   MPI_Finalize();
 }
 
-#define sweep 100
-void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper)
-{
-  if (lower >= upper) return;
-  MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
-  if(ready)
-    return;  //ya encontraron, salir
-
-  long mid = (lower+upper)/2;
-  long limit = mid+sweep > upper? upper : mid+sweep;
-  for(long i = mid; i < limit; ++i)
-    if(tryKey(i, cipher, ciphlen))
-    {
-      found = i;
-      printf("Process %d found the key\n", id);
-      for(int node=0; node<N; node++){
-        MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
-      }
-      return;
-    }
-
-  DNCbruteForce(cipher, ciphlen, lower, mid);
-  DNCbruteForce(cipher, ciphlen, mid+sweep+1, upper);
-}
 
 
 int tryKey(long key, char *ciph, int len)
@@ -169,4 +143,87 @@ void encrypt(long key, char *ciph)
   }
   des_setparity((char *)&k);  //el poder del casteo y &
   ecb_crypt((char *)&k, (char *) ciph, 16, DES_ENCRYPT);
+}
+
+
+void sieve(char* cipher, int ciphlen)
+{
+  long upper = (1L <<56); 
+  long lower_bound;
+  
+  long key;
+
+  //Primer proceso trata a 2^56 y 2^56-1 como casos especiales
+  // porque no los cubre el resto del proceso
+  if (id == 0)
+  {
+    if(tryKey(upper, cipher, ciphlen))
+      {
+        found = upper;
+        printf("Process %d found the key %ld\n", id, upper);
+      
+        for(int node=0; node<N; node++){
+          MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
+        }
+        return;
+      }
+  }
+  // la cantidad de veces que se parte el problema.
+  long step_factor = 2;
+  for(int i = 0; i < 56; i++)
+  {
+    MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
+    if(ready)
+      return;  //ya encontraron, salir
+    long step = upper/step_factor;
+
+    lower_bound = step* 2 * id;
+    //lower_bound = range_per_node * id;
+    //upper_bound = range_per_node * (id+1) -1;
+    long step_amount = step_factor/2 / N  < 1 ?  1 : step_factor/2 / N;
+    if (step_amount < id)
+    {
+      //printf("Process %d skipped iter:\t%d\n", id, i);
+      step_factor*=2;
+      continue;
+    }
+    key = lower_bound + step;
+    //if (id == 0)
+    //  printf("Iter: %d\n", i);
+    for(long j = 0;  j < step_amount; j++)
+    {
+      //if (id == 3)
+      //printf("Process %d:\t%ld\t%d\t%ld\n", id, key, i, step_factor);
+      MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
+      if(ready)
+        return;  //ya encontraron, salir
+
+      if(tryKey(key, cipher, ciphlen))
+      {
+        found = key;
+        printf("Process %d found the key %ld\n", id, key);
+      
+        for(int node=0; node<N; node++){
+          MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
+        }
+        return;
+      }
+      
+      MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
+      if(ready)
+        return; 
+      //Probar con el número impar adyacente
+      if(tryKey(key-1, cipher, ciphlen))
+      {
+        found = key-1;
+        printf("Process %d found the key\n", id);
+        for(int node=0; node<N; node++){
+          MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
+        }
+        return;
+      }
+      key+=step*2;
+    }
+    step_factor *= 2;
+  }
 }
