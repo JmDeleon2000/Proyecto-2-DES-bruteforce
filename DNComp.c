@@ -94,8 +94,10 @@ int main(int argc, char *argv[]){ //char **argv
   //non blocking receive, revisar en el for si alguien ya encontro
   MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, MPI_ANY_TAG, comm, &req);
 
+#define threads_per_process 2
 
   DNCbruteForce(cipher, ciphlen, mylower, myupper);
+
 
   //wait y luego imprimir el texto
   if(id==0){
@@ -126,6 +128,8 @@ void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper)
   long limit = mid+sweep > upper? upper : mid+sweep;
 
   //Barrido a partir de la mitad del rango
+#pragma omp parallel num_threads(3)
+#pragma omp for schedule(auto)
   for(long i = mid; i < limit; ++i)
     if(tryKey(i, cipher, ciphlen))
     {
@@ -134,10 +138,16 @@ void DNCbruteForce(char* cipher, int ciphlen, long lower, long upper)
       for(int node=0; node<N; node++){
         MPI_Send(&found, 1, MPI_LONG, node, 0, MPI_COMM_WORLD); //avisar a otros
       }
-      return;
+#pragma omp cancel for
     }
 
-  /*Recurrir para continuar la solución del trabajo.*/
+  /*Recurrir para continuar la solución del trabajo.
+  Se crea una tarea para la primer llamada recursiva y se 
+  continua con la otra llamada recursiva sin crear una tarea
+  porque estamos en el flujo control de una thread que acaba 
+  de terminar sus responsabilidades. No tiene sentido incurrir 
+  en overhead de orquestamiento cuando esta thread puede hacerlo 
+  por su cuenta*/
   DNCbruteForce(cipher, ciphlen, lower, mid);
   DNCbruteForce(cipher, ciphlen, mid+sweep+1, upper);
 }
