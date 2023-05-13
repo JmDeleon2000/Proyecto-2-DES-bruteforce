@@ -178,22 +178,23 @@ void sieve(char* cipher, int ciphlen)
     long step = upper/step_factor;
 
     lower_bound = step* 2 * id;
-    //lower_bound = range_per_node * id;
-    //upper_bound = range_per_node * (id+1) -1;
+
+    /*La cantidad de pasos que se necesitan por iteración es la mitad de divisiones que se hacen
+    ya que solo nos interesan las fracciones con numerador impar dado que por simplificación de fracciones,
+    se sabe las que tienen numerados par fueron computadas por una iteración anterior.*/
     long step_amount = step_factor/2 / N  < 1 ?  1 : step_factor/2 / N;
+
+    /*Si existen menos pasos por hacer en esa interación que la cantidad de procesos,
+    continuar hasta llegar a una iteración en la que este proceso pueda hacer trabajo que no sea redundante*/
     if (step_amount < id)
     {
-      //printf("Process %d skipped iter:\t%d\n", id, i);
       step_factor*=2;
       continue;
     }
+    
     key = lower_bound + step;
-    //if (id == 0)
-    //  printf("Iter: %d\n", i);
     for(long j = 0;  j < step_amount; j++)
     {
-      //if (id == 3)
-      //printf("Process %d:\t%ld\t%d\t%ld\n", id, key, i, step_factor);
       MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
       if(ready)
         return;  //ya encontraron, salir
